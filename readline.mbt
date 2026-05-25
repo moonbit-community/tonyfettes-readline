@@ -40,19 +40,20 @@ struct Readline {
   tty : @tty.Tty
   config : Config
   state : State
-  // 1-based terminal row where the live composer starts. `0` means the
-  // composer has not been drawn yet; the first redraw anchors it at the current
-  // terminal cursor instead of forcing it to the bottom.
+  // 1-based terminal row where the current composer starts. The composer is the
+  // redrawable input area: header, prompt plus editable text, and footer.
+  //
+  // `0` means the composer has not been drawn yet; the first redraw anchors it
+  // at the terminal cursor instead of forcing it to the bottom.
   mut composer_top : Int
-  // Height of the live bottom composer from the last redraw. `0` means the
-  // composer has not been drawn yet. Once the composer exists, history writes
-  // reserve these rows by setting the terminal scroll region above
-  // `composer_top`.
+  // Height of the composer from the last redraw. Once the composer exists,
+  // output writes reserve these rows by setting the terminal scroll region
+  // above `composer_top`.
   mut composer_height : Int
-  // Cursor position inside the live composer from the last redraw. `write_doc`
-  // temporarily moves the terminal cursor into the history scroll region, then
-  // uses these fields to restore the input cursor without repainting composer
-  // rows.
+  // Cursor position inside the composer from the last redraw.
+  // `write_doc` temporarily moves the terminal cursor into the output region,
+  // then uses these fields to restore the input cursor without repainting the
+  // composer.
   mut composer_cursor_row : Int
   mut composer_cursor_col : Int
 }
@@ -181,7 +182,7 @@ fn Readline::layout(
     }
   }
   let prompt = prompt.unwrap_or(Span::plain("> "))
-  let before_cursor = Text::new([
+  let before_cursor = Text([
     prompt,
     Span::plain(self.state.before_cursor()),
   ]).wrap(width~)
@@ -196,7 +197,7 @@ fn Readline::layout(
       col
     }
   }
-  let input = Text::new([prompt, Span::plain(self.state.text())])
+  let input = Text([prompt, Span::plain(self.state.text())])
   for row in input.wrap(width~) {
     rows.push(row)
   }
@@ -216,7 +217,7 @@ fn Readline::input_frame(
 ) -> Frame {
   let prompt = prompt.unwrap_or(Span::plain("> "))
   Frame(
-    Text::new([prompt, Span::plain(self.state.text())]).wrap(width=size.cols),
+    Text([prompt, Span::plain(self.state.text())]).wrap(width=size.cols),
   )
 }
 
@@ -316,7 +317,7 @@ async fn Readline::redraw(
 }
 
 ///|
-async fn Readline::shift_composer_down_for_insert(
+async fn Readline::shift_composer_down_for_output(
   self : Readline,
   size~ : TerminalSize,
   lines~ : Int,
@@ -339,7 +340,7 @@ async fn Readline::shift_composer_down_for_insert(
 }
 
 ///|
-async fn Readline::insert_history_frame(
+async fn Readline::write_output_frame(
   self : Readline,
   frame : Frame,
   size~ : TerminalSize,
@@ -348,16 +349,16 @@ async fn Readline::insert_history_frame(
     frame.write_to(self.tty)
     self.tty.write_string("\r\n")
   } else {
-    let old_top = self.shift_composer_down_for_insert(
+    let old_top = self.shift_composer_down_for_output(
       size~,
       lines=frame.lines.length(),
     )
-    let history_bottom = self.composer_top - 1
-    if history_bottom < 1 {
+    let output_bottom = self.composer_top - 1
+    if output_bottom < 1 {
       self.place_composer_cursor()
       return
     }
-    self.tty.set_top_bottom_margins(1, history_bottom)
+    self.tty.set_top_bottom_margins(1, output_bottom)
     let cursor_row = if old_top > 1 { old_top - 1 } else { 1 }
     self.tty.set_cursor_position(cursor_row, 1)
     for line in frame.lines {
@@ -375,7 +376,7 @@ async fn Readline::commit_input(
   size~ : TerminalSize,
   prompt? : Span,
 ) -> Unit {
-  self.insert_history_frame(self.input_frame(size~, prompt?), size~)
+  self.write_output_frame(self.input_frame(size~, prompt?), size~)
 }
 
 ///|
@@ -397,14 +398,14 @@ pub async fn Readline::read_line(
       error => raise error
     }
     match event {
-      @tty.Input(@tty/input.Key(key)) =>
+      Input(Key(key)) =>
         match key.code {
-          @tty/input.Char('c') if key.modifiers.ctrl() => {
+          Char('c') if key.modifiers.ctrl() => {
             self.state.reset()
             self.redraw(header?, prompt?, footer?)
             break Interrupted
           }
-          @tty/input.Char('d') if key.modifiers.ctrl() =>
+          Char('d') if key.modifiers.ctrl() =>
             if self.state.text().length() == 0 {
               self.state.reset()
               self.redraw(header?, prompt?, footer?)
@@ -413,7 +414,7 @@ pub async fn Readline::read_line(
               self.state.delete_after()
               self.redraw(header?, prompt?, footer?)
             }
-          @tty/input.Enter => {
+          Enter => {
             let text = self.state.text()
             let size = self.terminal_size()
             self.commit_input(size~, prompt?)
@@ -421,27 +422,27 @@ pub async fn Readline::read_line(
             self.redraw(header?, prompt?, footer?)
             break Line(text)
           }
-          @tty/input.Backspace => {
+          Backspace => {
             self.state.delete_before()
             self.redraw(header?, prompt?, footer?)
           }
-          @tty/input.Delete => {
+          Delete => {
             self.state.delete_after()
             self.redraw(header?, prompt?, footer?)
           }
-          @tty/input.Left => {
+          Left => {
             self.state.move_left()
             self.redraw(header?, prompt?, footer?)
           }
-          @tty/input.Right => {
+          Right => {
             self.state.move_right()
             self.redraw(header?, prompt?, footer?)
           }
-          @tty/input.Home => {
+          Home => {
             self.state.move_home()
             self.redraw(header?, prompt?, footer?)
           }
-          @tty/input.End => {
+          End => {
             self.state.move_end()
             self.redraw(header?, prompt?, footer?)
           }
@@ -451,12 +452,12 @@ pub async fn Readline::read_line(
               self.redraw(header?, prompt?, footer?)
             }
         }
-      @tty.Input(@tty/input.Paste(text)) => {
+      Input(Paste(text)) => {
         self.state.insert_text(text)
         self.redraw(header?, prompt?, footer?)
       }
-      @tty.Input(@tty/input.Unknown(_)) => ()
-      @tty.Resize(_) => self.redraw(header?, prompt?, footer?)
+      Input(Unknown(_)) => ()
+      Resize(_) => self.redraw(header?, prompt?, footer?)
     }
   }
 }
@@ -464,7 +465,7 @@ pub async fn Readline::read_line(
 ///|
 pub async fn Readline::write_doc(self : Readline, doc : Doc) -> Unit {
   let size = self.terminal_size()
-  self.insert_history_frame(doc.layout(width=size.cols), size~)
+  self.write_output_frame(doc.layout(width=size.cols), size~)
 }
 
 ///|

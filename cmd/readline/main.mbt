@@ -1,6 +1,6 @@
 ///|
 fn prompt() -> @rl.Span {
-  @rl.Span::new(
+  @rl.Span(
     "readline> ",
     style=@rl.Style::new(foreground=@tty_color.Basic(@tty_color.BrightGreen)),
   )
@@ -9,8 +9,8 @@ fn prompt() -> @rl.Span {
 ///|
 fn header() -> @rl.Doc {
   @rl.Doc([
-    @rl.Text::new([
-      @rl.Span::new(
+    @rl.Text([
+      @rl.Span(
         "readline demo",
         style=@rl.Style::new(
           foreground=@tty_color.Basic(@tty_color.BrightCyan),
@@ -25,8 +25,8 @@ fn header() -> @rl.Doc {
 ///|
 fn footer(round : Int) -> @rl.Doc {
   @rl.Doc([
-    @rl.Text::new([
-      @rl.Span::new(
+    @rl.Text([
+      @rl.Span(
         "round \{round}",
         style=@rl.Style::new(
           foreground=@tty_color.Basic(@tty_color.BrightBlack),

@@ -19,13 +19,13 @@ struct Text {
 }
 
 ///|
-pub fn Text::new(spans : Array[Span]) -> Text {
+pub fn Text::Text(spans : Array[Span]) -> Text {
   { spans, }
 }
 
 ///|
 pub fn Text::plain(text : String) -> Text {
-  Text::new([Span::plain(text)])
+  Text([Span::plain(text)])
 }
 
 ///|
@@ -35,13 +35,13 @@ struct Span {
 }
 
 ///|
-pub fn Span::new(text : String, style? : Style = Style::default()) -> Span {
+pub fn Span::Span(text : String, style? : Style = Style::default()) -> Span {
   { text, style }
 }
 
 ///|
 pub fn Span::plain(text : String) -> Span {
-  Span::new(text)
+  Span::Span(text)
 }
 
 ///|
@@ -153,7 +153,7 @@ fn Text::wrap(self : Text, width~ : Int) -> Array[Line] {
           spans = []
           used = 0
         }
-        spans.push(Span::new(text, style=span.style))
+        spans.push(Span::Span(text, style=span.style))
         used += next
       }
     }
