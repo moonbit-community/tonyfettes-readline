@@ -1,0 +1,11 @@
+import {
+  "moonbitlang/async",
+  "moonbit-community/readline" @rl,
+  "moonbit-community/tty/color" @tty_color,
+}
+
+supported_targets = "native"
+
+options(
+  "is-main": true,
+)

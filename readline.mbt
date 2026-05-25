@@ -1,10 +1,60 @@
 ///|
+const DefaultTerminalRows : Int = 24
+
+///|
+const DefaultTerminalCols : Int = 80
+
+///|
+priv struct TerminalSize {
+  rows : Int
+  cols : Int
+}
+
+///|
+fn TerminalSize::bottom_composer_top(self : TerminalSize, height : Int) -> Int {
+  let top = self.rows - height + 1
+  if top < 1 {
+    1
+  } else {
+    top
+  }
+}
+
+///|
+fn TerminalSize::visible_frame_height(
+  self : TerminalSize,
+  frame : Frame,
+) -> Int {
+  let height = frame.lines.length()
+  if height < 1 {
+    1
+  } else if height > self.rows {
+    self.rows
+  } else {
+    height
+  }
+}
+
+///|
 struct Readline {
   tty : @tty.Tty
   config : Config
   state : State
-  mut rendered_height : Int
-  mut rendered_cursor_row : Int
+  // 1-based terminal row where the live composer starts. `0` means the
+  // composer has not been drawn yet; the first redraw anchors it at the current
+  // terminal cursor instead of forcing it to the bottom.
+  mut composer_top : Int
+  // Height of the live bottom composer from the last redraw. `0` means the
+  // composer has not been drawn yet. Once the composer exists, history writes
+  // reserve these rows by setting the terminal scroll region above
+  // `composer_top`.
+  mut composer_height : Int
+  // Cursor position inside the live composer from the last redraw. `write_doc`
+  // temporarily moves the terminal cursor into the history scroll region, then
+  // uses these fields to restore the input cursor without repainting composer
+  // rows.
+  mut composer_cursor_row : Int
+  mut composer_cursor_col : Int
 }
 
 ///|
@@ -25,16 +75,20 @@ pub async fn[T] with_readline(
     tty,
     config,
     state: State::new(),
-    rendered_height: 0,
-    rendered_cursor_row: 0,
+    composer_top: 0,
+    composer_height: 0,
+    composer_cursor_row: 0,
+    composer_cursor_col: 0,
   }
   try tty.with_raw_mode(() => f(readline)) catch {
     error => {
+      readline.leave()
       tty.close()
       raise error
     }
   } noraise {
     value => {
+      readline.leave()
       tty.close()
       value
     }
@@ -42,27 +96,84 @@ pub async fn[T] with_readline(
 }
 
 ///|
-fn Readline::terminal_width(self : Readline) -> Int {
-  let width = try self.tty.window_size() catch {
-    _ => 80
+fn Readline::terminal_size(self : Readline) -> TerminalSize {
+  let size = try self.tty.window_size() catch {
+    _ => { rows: DefaultTerminalRows, cols: DefaultTerminalCols }
   } noraise {
-    size => size.cols
+    size => { rows: size.rows, cols: size.cols }
   }
-  if width < 1 {
+  {
+    rows: if size.rows < 1 {
+      DefaultTerminalRows
+    } else {
+      size.rows
+    },
+    cols: if size.cols < 1 {
+      DefaultTerminalCols
+    } else {
+      size.cols
+    },
+  }
+}
+
+///|
+fn TerminalSize::normalize_composer_top(
+  self : TerminalSize,
+  height~ : Int,
+  top~ : Int,
+) -> Int {
+  let bottom_top = self.bottom_composer_top(height)
+  if top < 1 {
     1
+  } else if top > bottom_top {
+    bottom_top
   } else {
-    width
+    top
+  }
+}
+
+///|
+async fn Readline::initial_composer_top(
+  self : Readline,
+  size~ : TerminalSize,
+  height~ : Int,
+) -> Int {
+  match self.tty.query_cursor_position(timeout_ms=self.config.esc_timeout_ms) {
+    Some(position) => size.normalize_composer_top(height~, top=position.row)
+    None => size.bottom_composer_top(height)
+  }
+}
+
+///|
+fn Readline::next_composer_top(
+  self : Readline,
+  size~ : TerminalSize,
+  height~ : Int,
+) -> Int {
+  let top = size.normalize_composer_top(height~, top=self.composer_top)
+  if self.composer_height == 0 {
+    top
+  } else if height > self.composer_height {
+    let bottom = top + height - 1
+    if bottom <= size.rows {
+      top
+    } else {
+      size.bottom_composer_top(height)
+    }
+  } else {
+    top
   }
 }
 
 ///|
 fn Readline::layout(
   self : Readline,
+  size~ : TerminalSize,
   header? : Doc,
   prompt? : Span,
   footer? : Doc,
 ) -> Rendered {
-  let width = self.terminal_width()
+  let width = size.cols
   let rows : Array[Line] = []
   if header is Some(header) {
     for row in header.layout(width~).lines {
@@ -98,11 +209,62 @@ fn Readline::layout(
 }
 
 ///|
+fn Readline::input_frame(
+  self : Readline,
+  size~ : TerminalSize,
+  prompt? : Span,
+) -> Frame {
+  let prompt = prompt.unwrap_or(Span::plain("> "))
+  Frame(
+    Text::new([prompt, Span::plain(self.state.text())]).wrap(width=size.cols),
+  )
+}
+
+///|
 async fn Readline::draw_line(self : Readline, line : Line?) -> Unit {
   self.tty.write_string("\r")
   self.tty.erase_line_all()
   if line is Some(line) {
     line.write_to(self.tty)
+  }
+}
+
+///|
+async fn Readline::draw_line_at(
+  self : Readline,
+  row : Int,
+  line : Line?,
+) -> Unit {
+  self.tty.set_cursor_position(row, 1)
+  self.draw_line(line)
+}
+
+///|
+async fn Readline::scroll_history_up_for_growth(
+  self : Readline,
+  old_top~ : Int,
+  new_top~ : Int,
+) -> Unit {
+  let rows = old_top - new_top
+  let history_bottom = old_top - 1
+  if rows > 0 && history_bottom >= 1 {
+    self.tty.set_top_bottom_margins(1, history_bottom)
+    self.tty.set_cursor_position(history_bottom, 1)
+    for _ in 0..<rows {
+      self.tty.write_string("\r\n")
+    }
+    self.tty.reset_top_bottom_margins()
+  }
+}
+
+///|
+async fn Readline::place_composer_cursor(self : Readline) -> Unit {
+  if self.composer_top > 0 && self.composer_height > 0 {
+    self.tty.show_cursor()
+    self.tty.set_cursor_position(
+      self.composer_top + self.composer_cursor_row,
+      1 + self.composer_cursor_col,
+    )
   }
 }
 
@@ -113,41 +275,107 @@ async fn Readline::redraw(
   prompt? : Span,
   footer? : Doc,
 ) -> Unit {
-  if self.rendered_height > 0 && self.rendered_cursor_row > 0 {
-    self.tty.cursor_up(self.rendered_cursor_row)
+  let size = self.terminal_size()
+  let rendered = self.layout(size~, header?, prompt?, footer?)
+  let old_height = self.composer_height
+  let next_height = size.visible_frame_height(rendered.frame)
+  let old_top = if self.composer_top > 0 { self.composer_top } else { 0 }
+  let new_top = if old_height == 0 {
+    self.initial_composer_top(size~, height=next_height)
+  } else {
+    self.next_composer_top(size~, height=next_height)
   }
-  let rendered = self.layout(header?, prompt?, footer?)
-  let next_height = rendered.frame.lines.length()
-  let draw_height = Int::max(self.rendered_height, next_height)
-  for row in 0..<draw_height {
-    if row > 0 {
-      self.tty.write_string("\r\n")
-    }
-    self.draw_line(rendered.frame.lines.get(row))
+  if old_height > 0 && new_top < old_top {
+    self.scroll_history_up_for_growth(old_top~, new_top~)
   }
-  if draw_height > 0 {
-    let rows_up = draw_height - 1 - rendered.cursor_row
-    if rows_up > 0 {
-      self.tty.cursor_up(rows_up)
-    }
-    self.tty.write_string("\r")
-    if rendered.cursor_col > 0 {
-      self.tty.cursor_forward(rendered.cursor_col)
+  let draw_top = if old_height > 0 && old_top > 0 && old_top < new_top {
+    old_top
+  } else {
+    new_top
+  }
+  for row in draw_top..<=size.rows {
+    let frame_row = row - new_top
+    if frame_row >= 0 && frame_row < next_height {
+      self.draw_line_at(row, rendered.frame.lines.get(frame_row))
+    } else {
+      self.draw_line_at(row, None)
     }
   }
-  self.rendered_height = draw_height
-  self.rendered_cursor_row = rendered.cursor_row
+  let cursor_row = if rendered.cursor_row < 0 {
+    0
+  } else if rendered.cursor_row >= next_height {
+    next_height - 1
+  } else {
+    rendered.cursor_row
+  }
+  self.composer_top = new_top
+  self.composer_height = next_height
+  self.composer_cursor_row = cursor_row
+  self.composer_cursor_col = rendered.cursor_col
+  self.place_composer_cursor()
 }
 
 ///|
-async fn Readline::commit_live_frame(self : Readline) -> Unit {
-  if self.rendered_height > 0 {
-    for _ in self.rendered_cursor_row..<self.rendered_height {
-      self.tty.write_string("\r\n")
+async fn Readline::shift_composer_down_for_insert(
+  self : Readline,
+  size~ : TerminalSize,
+  lines~ : Int,
+) -> Int {
+  let old_top = self.composer_top
+  let bottom = self.composer_top + self.composer_height - 1
+  let space = size.rows - bottom
+  let available = if space < 0 { 0 } else { space }
+  let shift = if lines < available { lines } else { available }
+  if shift > 0 {
+    self.tty.set_top_bottom_margins(self.composer_top, size.rows)
+    self.tty.set_cursor_position(self.composer_top, 1)
+    for _ in 0..<shift {
+      self.tty.reverse_index()
     }
-    self.rendered_height = 0
-    self.rendered_cursor_row = 0
+    self.tty.reset_top_bottom_margins()
+    self.composer_top += shift
   }
+  old_top
+}
+
+///|
+async fn Readline::insert_history_frame(
+  self : Readline,
+  frame : Frame,
+  size~ : TerminalSize,
+) -> Unit {
+  if self.composer_height <= 0 || self.composer_top <= 0 {
+    frame.write_to(self.tty)
+    self.tty.write_string("\r\n")
+  } else {
+    let old_top = self.shift_composer_down_for_insert(
+      size~,
+      lines=frame.lines.length(),
+    )
+    let history_bottom = self.composer_top - 1
+    if history_bottom < 1 {
+      self.place_composer_cursor()
+      return
+    }
+    self.tty.set_top_bottom_margins(1, history_bottom)
+    let cursor_row = if old_top > 1 { old_top - 1 } else { 1 }
+    self.tty.set_cursor_position(cursor_row, 1)
+    for line in frame.lines {
+      self.tty.write_string("\r\n")
+      self.draw_line(Some(line))
+    }
+    self.tty.reset_top_bottom_margins()
+    self.place_composer_cursor()
+  }
+}
+
+///|
+async fn Readline::commit_input(
+  self : Readline,
+  size~ : TerminalSize,
+  prompt? : Span,
+) -> Unit {
+  self.insert_history_frame(self.input_frame(size~, prompt?), size~)
 }
 
 ///|
@@ -162,7 +390,8 @@ pub async fn Readline::read_line(
   for ;; {
     let event = self.tty.read_event(esc_timeout_ms=self.config.esc_timeout_ms) catch {
       @async/io.ReaderClosed => {
-        self.commit_live_frame()
+        self.state.reset()
+        self.redraw(header?, prompt?, footer?)
         break Eof
       }
       error => raise error
@@ -171,12 +400,14 @@ pub async fn Readline::read_line(
       @tty.Input(@tty/input.Key(key)) =>
         match key.code {
           @tty/input.Char('c') if key.modifiers.ctrl() => {
-            self.commit_live_frame()
+            self.state.reset()
+            self.redraw(header?, prompt?, footer?)
             break Interrupted
           }
           @tty/input.Char('d') if key.modifiers.ctrl() =>
             if self.state.text().length() == 0 {
-              self.commit_live_frame()
+              self.state.reset()
+              self.redraw(header?, prompt?, footer?)
               break Eof
             } else {
               self.state.delete_after()
@@ -184,7 +415,10 @@ pub async fn Readline::read_line(
             }
           @tty/input.Enter => {
             let text = self.state.text()
-            self.commit_live_frame()
+            let size = self.terminal_size()
+            self.commit_input(size~, prompt?)
+            self.state.reset()
+            self.redraw(header?, prompt?, footer?)
             break Line(text)
           }
           @tty/input.Backspace => {
@@ -229,7 +463,22 @@ pub async fn Readline::read_line(
 
 ///|
 pub async fn Readline::write_doc(self : Readline, doc : Doc) -> Unit {
-  self.commit_live_frame()
-  doc.layout(width=self.terminal_width()).write_to(self.tty)
-  self.tty.write_string("\r\n")
+  let size = self.terminal_size()
+  self.insert_history_frame(doc.layout(width=size.cols), size~)
+}
+
+///|
+async fn Readline::leave(self : Readline) -> Unit {
+  self.tty.reset_top_bottom_margins()
+  self.tty.reset_style()
+  self.tty.show_cursor()
+  if self.composer_height > 0 {
+    let size = self.terminal_size()
+    self.tty.set_cursor_position(size.rows, 1)
+    self.tty.write_string("\r\n")
+    self.composer_top = 0
+    self.composer_height = 0
+    self.composer_cursor_row = 0
+    self.composer_cursor_col = 0
+  }
 }
