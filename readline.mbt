@@ -40,6 +40,7 @@ struct Readline {
   tty : @tty.Tty
   config : Config
   state : State
+  history : History
   // 1-based terminal row where the current composer starts. The composer is the
   // redrawable input area: header, prompt plus editable text, and footer.
   //
@@ -76,6 +77,7 @@ pub async fn[T] with_readline(
     tty,
     config,
     state: State::new(),
+    history: History::new(),
     composer_top: 0,
     composer_height: 0,
     composer_cursor_row: 0,
@@ -381,6 +383,48 @@ async fn Readline::commit_input(
 }
 
 ///|
+async fn Readline::submit_current_line(
+  self : Readline,
+  header? : Doc,
+  prompt? : Span,
+  footer? : Doc,
+) -> String {
+  let text = self.state.text()
+  let size = self.terminal_size()
+  self.commit_input(size~, prompt?)
+  self.history.push(text)
+  self.state.reset()
+  self.redraw(header?, prompt?, footer?)
+  text
+}
+
+///|
+async fn Readline::recall_previous_history(
+  self : Readline,
+  header? : Doc,
+  prompt? : Span,
+  footer? : Doc,
+) -> Unit {
+  if self.history.previous(self.state.text()) is Some(text) {
+    self.state.replace(text)
+    self.redraw(header?, prompt?, footer?)
+  }
+}
+
+///|
+async fn Readline::recall_next_history(
+  self : Readline,
+  header? : Doc,
+  prompt? : Span,
+  footer? : Doc,
+) -> Unit {
+  if self.history.next() is Some(text) {
+    self.state.replace(text)
+    self.redraw(header?, prompt?, footer?)
+  }
+}
+
+///|
 pub async fn Readline::read_line(
   self : Readline,
   header? : Doc,
@@ -388,11 +432,13 @@ pub async fn Readline::read_line(
   footer? : Doc,
 ) -> Event {
   self.state.reset()
+  self.history.reset_navigation(draft="")
   self.redraw(header?, prompt?, footer?)
   for ;; {
     let event = self.tty.read_event(esc_timeout_ms=self.config.esc_timeout_ms) catch {
       @async/io.ReaderClosed => {
         self.state.reset()
+        self.history.reset_navigation(draft="")
         self.redraw(header?, prompt?, footer?)
         break Eof
       }
@@ -401,8 +447,17 @@ pub async fn Readline::read_line(
     match event {
       Input(Key(key)) =>
         match key.code {
+          Char('a') if key.modifiers.ctrl() => {
+            self.state.move_home()
+            self.redraw(header?, prompt?, footer?)
+          }
+          Char('b') if key.modifiers.ctrl() => {
+            self.state.move_left()
+            self.redraw(header?, prompt?, footer?)
+          }
           Char('c') if key.modifiers.ctrl() => {
             self.state.reset()
+            self.history.reset_navigation(draft="")
             self.redraw(header?, prompt?, footer?)
             break Interrupted
           }
@@ -413,12 +468,32 @@ pub async fn Readline::read_line(
               self.state.delete_after()
               self.redraw(header?, prompt?, footer?)
             }
-          Enter => {
-            let text = self.state.text()
-            let size = self.terminal_size()
-            self.commit_input(size~, prompt?)
-            self.state.reset()
+          Char('e') if key.modifiers.ctrl() => {
+            self.state.move_end()
             self.redraw(header?, prompt?, footer?)
+          }
+          Char('f') if key.modifiers.ctrl() => {
+            self.state.move_right()
+            self.redraw(header?, prompt?, footer?)
+          }
+          Char('j') if key.modifiers.ctrl() => {
+            let text = self.submit_current_line(header?, prompt?, footer?)
+            break Line(text)
+          }
+          Char('k') if key.modifiers.ctrl() => {
+            self.state.kill_after()
+            self.redraw(header?, prompt?, footer?)
+          }
+          Char('n') if key.modifiers.ctrl() =>
+            self.recall_next_history(header?, prompt?, footer?)
+          Char('p') if key.modifiers.ctrl() =>
+            self.recall_previous_history(header?, prompt?, footer?)
+          Char('u') if key.modifiers.ctrl() => {
+            self.state.kill_before()
+            self.redraw(header?, prompt?, footer?)
+          }
+          Enter => {
+            let text = self.submit_current_line(header?, prompt?, footer?)
             break Line(text)
           }
           Backspace => {
@@ -445,6 +520,8 @@ pub async fn Readline::read_line(
             self.state.move_end()
             self.redraw(header?, prompt?, footer?)
           }
+          Up => self.recall_previous_history(header?, prompt?, footer?)
+          Down => self.recall_next_history(header?, prompt?, footer?)
           _ =>
             if key.text is Some(text) {
               self.state.insert_text(text)

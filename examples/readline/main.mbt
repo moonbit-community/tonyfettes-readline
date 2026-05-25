@@ -18,7 +18,8 @@ fn header() -> @rl.Doc {
         ),
       ),
     ]),
-    @rl.Text::plain("Enter submits. Ctrl-C interrupts. Ctrl-D exits."),
+    @rl.Text::plain("Enter submits. Up/Down recall. Ctrl-A/E/B/F/K edit."),
+    @rl.Text::plain("Ctrl-C interrupts. Ctrl-D exits."),
   ])
 }
 

@@ -24,6 +24,12 @@ fn State::reset(self : State) -> Unit {
 }
 
 ///|
+fn State::replace(self : State, text : String) -> Unit {
+  self.text = text
+  self.cursor = self.length()
+}
+
+///|
 fn State::length(self : State) -> Int {
   @grapheme.graphemes(self.text).length()
 }
@@ -94,6 +100,20 @@ fn State::delete_after(self : State) -> Unit {
     let suffix = self.slice(cursor + 1, self.length())
     self.text = prefix + suffix
   }
+  self.cursor = cursor
+}
+
+///|
+fn State::kill_before(self : State) -> Unit {
+  let cursor = self.cursor()
+  self.text = self.slice(cursor, self.length())
+  self.cursor = 0
+}
+
+///|
+fn State::kill_after(self : State) -> Unit {
+  let cursor = self.cursor()
+  self.text = self.slice(0, cursor)
   self.cursor = cursor
 }
 
