@@ -95,6 +95,11 @@ async fn Span::write_to(self : Span, tty : @tty.Tty) -> Unit {
 }
 
 ///|
+fn Span::same_as(self : Span, other : Span) -> Bool {
+  self.text == other.text && self.style == other.style
+}
+
+///|
 priv struct Frame {
   lines : Array[Line]
 }
@@ -131,6 +136,36 @@ fn Line::display_width(self : Line) -> Int {
     width += span.display_width()
   }
   width
+}
+
+///|
+fn Line::same_as(self : Line, other : Line) -> Bool {
+  if self.spans.length() != other.spans.length() {
+    return false
+  }
+  for index, span in self.spans {
+    if other.spans.get(index) is Some(other_span) {
+      if !span.same_as(other_span) {
+        return false
+      }
+    } else {
+      return false
+    }
+  }
+  true
+}
+
+///|
+fn Line::same_optional(left : Line?, right : Line?) -> Bool {
+  if left is Some(left) {
+    if right is Some(right) {
+      left.same_as(right)
+    } else {
+      false
+    }
+  } else {
+    right is None
+  }
 }
 
 ///|

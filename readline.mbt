@@ -51,6 +51,9 @@ struct Readline {
   // output writes reserve these rows by setting the terminal scroll region
   // above `composer_top`.
   mut composer_height : Int
+  // Last frame drawn into the live composer rows. Redraw uses this to diff the
+  // new layout against the current terminal contents and skip unchanged rows.
+  mut composer_frame : Frame?
   // Cursor position inside the composer from the last redraw.
   // `write_doc` temporarily moves the terminal cursor into the output region,
   // then uses these fields to restore the input cursor without repainting the
@@ -80,6 +83,7 @@ pub async fn[T] with_readline(
     history: History::new(),
     composer_top: 0,
     composer_height: 0,
+    composer_frame: None,
     composer_cursor_row: 0,
     composer_cursor_col: 0,
   }
@@ -240,6 +244,90 @@ async fn Readline::draw_line_at(
 }
 
 ///|
+fn Frame::line_at_terminal_row(
+  self : Frame,
+  row~ : Int,
+  top~ : Int,
+  height~ : Int,
+) -> Line? {
+  let index = row - top
+  if index >= 0 && index < height {
+    self.lines.get(index)
+  } else {
+    None
+  }
+}
+
+///|
+// Diff two composer frames after they have already been laid out to terminal
+// rows. The diff unit is a physical terminal row, not a span or grapheme:
+//
+//   old_frame at old_top      new_frame at new_top
+//   row 5: "header"           row 5: "header"       unchanged, skip
+//   row 6: "> abc"            row 6: "> abcd"       changed, redraw row 6
+//   row 7: "footer"           row 7: "footer"       unchanged, skip
+//
+// The scan range is the union of the old and new composer footprints. Rows
+// that existed only in the old footprint map to `None` in the new frame, so
+// drawing them clears stale terminal content. On resize, terminal-owned reflow
+// can make old physical rows untrustworthy; callers pass `old_frame=None`, and
+// this function redraws the whole affected region instead of comparing against
+// stale model data.
+async fn Readline::draw_frame_diff(
+  self : Readline,
+  size~ : TerminalSize,
+  old_top~ : Int,
+  old_height~ : Int,
+  old_frame? : Frame,
+  new_top~ : Int,
+  new_height~ : Int,
+  new_frame~ : Frame,
+) -> Unit {
+  let has_old_region = old_top > 0 && old_height > 0
+  let old_content_unknown = has_old_region && old_frame is None
+  let old_bottom = if has_old_region {
+    old_top + old_height - 1
+  } else {
+    new_top - 1
+  }
+  let new_bottom = new_top + new_height - 1
+  let draw_top = if has_old_region && old_top < new_top {
+    old_top
+  } else {
+    new_top
+  }
+  let draw_bottom = if old_bottom > new_bottom {
+    old_bottom
+  } else {
+    new_bottom
+  }
+  let draw_bottom = if old_content_unknown { size.rows } else { draw_bottom }
+  let draw_top = if draw_top < 1 { 1 } else { draw_top }
+  let draw_bottom = if draw_bottom > size.rows {
+    size.rows
+  } else {
+    draw_bottom
+  }
+  if draw_top <= draw_bottom {
+    for row in draw_top..<=draw_bottom {
+      let old_line = if old_frame is Some(frame) {
+        frame.line_at_terminal_row(row~, top=old_top, height=old_height)
+      } else {
+        None
+      }
+      let new_line = new_frame.line_at_terminal_row(
+        row~,
+        top=new_top,
+        height=new_height,
+      )
+      if old_content_unknown || !Line::same_optional(old_line, new_line) {
+        self.draw_line_at(row, new_line)
+      }
+    }
+  }
+}
+
+///|
 async fn Readline::scroll_history_up_for_growth(
   self : Readline,
   old_top~ : Int,
@@ -274,37 +362,57 @@ async fn Readline::redraw(
   header? : Doc,
   prompt? : Span,
   footer? : Doc,
+  force_full? : Bool = false,
 ) -> Unit {
   let size = self.terminal_size()
   let rendered = self.layout(size~, header?, prompt?, footer?)
   let old_height = self.composer_height
+  let old_frame = if force_full { None } else { self.composer_frame }
   let next_height = size.visible_frame_height(rendered.frame)
+  let growth = if next_height > old_height {
+    next_height - old_height
+  } else {
+    0
+  }
   let old_top = if self.composer_top > 0 { self.composer_top } else { 0 }
-  let new_top = if old_height == 0 {
+  let planned_top = if old_height == 0 {
     self.initial_composer_top(size~, height=next_height)
   } else {
     self.next_composer_top(size~, height=next_height)
   }
-  if old_height > 0 && new_top < old_top {
+  let new_top = if force_full && old_height > 0 && growth > 0 {
+    size.normalize_composer_top(height=next_height, top=planned_top - growth)
+  } else {
+    planned_top
+  }
+  if !force_full && old_height > 0 && new_top < old_top {
     self.scroll_history_up_for_growth(old_top~, new_top~)
   }
-  // Redraw moves through multiple rows and clears/reprints each one. Hiding the
-  // cursor during that sweep avoids a visible cursor jumping through history and
-  // composer rows.
-  self.tty.hide_cursor()
-  let draw_top = if old_height > 0 && old_top > 0 && old_top < new_top {
-    old_top
-  } else {
-    new_top
-  }
-  for row in draw_top..<=size.rows {
-    let frame_row = row - new_top
-    if frame_row >= 0 && frame_row < next_height {
-      self.draw_line_at(row, rendered.frame.lines.get(frame_row))
+  let diff_old_top = if force_full && old_height > 0 && growth > 0 {
+    let top = old_top - growth
+    if top < 1 {
+      1
     } else {
-      self.draw_line_at(row, None)
+      top
     }
+  } else {
+    old_top
   }
+  let diff_old_height = old_height + (old_top - diff_old_top)
+  // Frame diffing can still move through several terminal rows when the
+  // composer wraps, shrinks, or changes header/footer rows. Hiding the cursor
+  // during that sweep avoids a visible cursor jumping through intermediate
+  // positions.
+  self.tty.hide_cursor()
+  self.draw_frame_diff(
+    size~,
+    old_top=diff_old_top,
+    old_height=diff_old_height,
+    old_frame?,
+    new_top~,
+    new_height=next_height,
+    new_frame=rendered.frame,
+  )
   let cursor_row = if rendered.cursor_row < 0 {
     0
   } else if rendered.cursor_row >= next_height {
@@ -314,6 +422,7 @@ async fn Readline::redraw(
   }
   self.composer_top = new_top
   self.composer_height = next_height
+  self.composer_frame = Some(rendered.frame)
   self.composer_cursor_row = cursor_row
   self.composer_cursor_col = rendered.cursor_col
   self.place_composer_cursor()
@@ -533,7 +642,7 @@ pub async fn Readline::read_line(
         self.redraw(header?, prompt?, footer?)
       }
       Input(Unknown(_)) => ()
-      Resize(_) => self.redraw(header?, prompt?, footer?)
+      Resize(_) => self.redraw(header?, prompt?, footer?, force_full=true)
     }
   }
 }
@@ -569,6 +678,7 @@ async fn Readline::leave(self : Readline) -> Unit {
     self.tty.write_string("\r\n")
     self.composer_top = 0
     self.composer_height = 0
+    self.composer_frame = None
     self.composer_cursor_row = 0
     self.composer_cursor_col = 0
   }
