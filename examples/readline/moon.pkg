@@ -1,6 +1,6 @@
 import {
   "moonbitlang/async",
-  "moonbit-community/readline" @rl,
+  "tonyfettes/readline" @rl,
   "moonbit-community/tty/color" @tty_color,
 }
 

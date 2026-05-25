@@ -182,10 +182,9 @@ fn Readline::layout(
     }
   }
   let prompt = prompt.unwrap_or(Span::plain("> "))
-  let before_cursor = Text([
-    prompt,
-    Span::plain(self.state.before_cursor()),
-  ]).wrap(width~)
+  let before_cursor = Text([prompt, Span::plain(self.state.before_cursor())]).wrap(
+    width~,
+  )
   let cursor_row = rows.length() + before_cursor.length() - 1
   let cursor_col = if before_cursor.length() == 0 {
     0
@@ -216,9 +215,7 @@ fn Readline::input_frame(
   prompt? : Span,
 ) -> Frame {
   let prompt = prompt.unwrap_or(Span::plain("> "))
-  Frame(
-    Text([prompt, Span::plain(self.state.text())]).wrap(width=size.cols),
-  )
+  Frame(Text([prompt, Span::plain(self.state.text())]).wrap(width=size.cols))
 }
 
 ///|
@@ -289,6 +286,10 @@ async fn Readline::redraw(
   if old_height > 0 && new_top < old_top {
     self.scroll_history_up_for_growth(old_top~, new_top~)
   }
+  // Redraw moves through multiple rows and clears/reprints each one. Hiding the
+  // cursor during that sweep avoids a visible cursor jumping through history and
+  // composer rows.
+  self.tty.hide_cursor()
   let draw_top = if old_height > 0 && old_top > 0 && old_top < new_top {
     old_top
   } else {
@@ -407,8 +408,6 @@ pub async fn Readline::read_line(
           }
           Char('d') if key.modifiers.ctrl() =>
             if self.state.text().length() == 0 {
-              self.state.reset()
-              self.redraw(header?, prompt?, footer?)
               break Eof
             } else {
               self.state.delete_after()
@@ -475,7 +474,21 @@ async fn Readline::leave(self : Readline) -> Unit {
   self.tty.show_cursor()
   if self.composer_height > 0 {
     let size = self.terminal_size()
-    self.tty.set_cursor_position(size.rows, 1)
+    // Leave the terminal cursor just after the visible composer, not at the
+    // absolute bottom of the screen. The composer remains on screen when
+    // `read_line` returns; writing the next shell prompt on top of it would
+    // overwrite live UI rows. Moving to the composer's last row and emitting one
+    // CRLF places the prompt below the composer, scrolling only when the
+    // composer already reaches the terminal bottom.
+    let composer_bottom = self.composer_top + self.composer_height - 1
+    let row = if composer_bottom < 1 {
+      1
+    } else if composer_bottom > size.rows {
+      size.rows
+    } else {
+      composer_bottom
+    }
+    self.tty.set_cursor_position(row, 1)
     self.tty.write_string("\r\n")
     self.composer_top = 0
     self.composer_height = 0
