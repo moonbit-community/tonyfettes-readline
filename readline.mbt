@@ -36,6 +36,11 @@ fn TerminalSize::visible_frame_height(
 }
 
 ///|
+/// An interactive terminal line editor.
+///
+/// `Readline` owns the terminal session state, input history, and live composer
+/// rows. Values are created by `with_readline` and are intended to be used only
+/// while that callback is running.
 struct Readline {
   tty : @tty.Tty
   config : Config
@@ -70,6 +75,11 @@ priv struct Rendered {
 }
 
 ///|
+/// Open a readline session, switch the terminal into raw mode, and run `f`.
+///
+/// The terminal is restored before this function returns or re-raises an error.
+/// `esc_timeout_ms` controls how long the underlying terminal reader waits to
+/// disambiguate escape sequences such as Alt-key input; it defaults to 50 ms.
 pub async fn[T] with_readline(
   esc_timeout_ms? : Int,
   f : async (Readline) -> T,
@@ -534,6 +544,12 @@ async fn Readline::recall_next_history(
 }
 
 ///|
+/// Read one line of user input from the terminal.
+///
+/// `header` is rendered above the editable input area, `prompt` is rendered
+/// before the editable text, and `footer` is rendered below it. The editor
+/// supports common line-editing keys, history navigation, paste input, and
+/// terminal resize redraws.
 pub async fn Readline::read_line(
   self : Readline,
   header? : Doc,
@@ -648,6 +664,10 @@ pub async fn Readline::read_line(
 }
 
 ///|
+/// Write a document to the terminal without corrupting the active input area.
+///
+/// If a prompt is currently visible, the document is inserted above it and the
+/// input cursor is restored afterwards.
 pub async fn Readline::write_doc(self : Readline, doc : Doc) -> Unit {
   let size = self.terminal_size()
   self.write_output_frame(doc.layout(width=size.cols), size~)

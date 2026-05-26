@@ -1,8 +1,10 @@
 ///|
+/// The result of a `Readline::read_line` interaction.
 pub(all) enum Event {
+  /// The user submitted a complete input line.
   Line(String)
-  /// Ctrl+C
+  /// The user pressed Ctrl+C.
   Interrupted
-  /// Ctrl+D
+  /// The input stream ended, or the user pressed Ctrl+D on an empty line.
   Eof
 }

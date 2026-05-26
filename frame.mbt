@@ -1,50 +1,72 @@
 ///|
+/// A renderable document made of logical text blocks.
+///
+/// `Doc` is used for headers, footers, and output written through
+/// `Readline::write_doc`. Each `Text` block is wrapped independently when the
+/// document is laid out for the current terminal width.
 struct Doc {
   texts : Array[Text]
 }
 
 ///|
+/// Build a document from a sequence of text blocks.
 pub fn Doc::Doc(texts : Array[Text]) -> Doc {
   { texts, }
 }
 
 ///|
+/// Build a document containing one unstyled text block.
 pub fn Doc::plain(text : String) -> Doc {
   Doc([Text::plain(text)])
 }
 
 ///|
+/// A logical text block made of styled spans.
+///
+/// Text wraps by terminal display width and treats newline characters as forced
+/// row breaks.
 struct Text {
   spans : Array[Span]
 }
 
 ///|
+/// Build a text block from a sequence of styled spans.
 pub fn Text::Text(spans : Array[Span]) -> Text {
   { spans, }
 }
 
 ///|
+/// Build a text block containing one unstyled span.
 pub fn Text::plain(text : String) -> Text {
   Text([Span::plain(text)])
 }
 
 ///|
+/// A string fragment with an associated terminal style.
 struct Span {
   text : String
   style : Style
 }
 
 ///|
+/// Build a styled span.
+///
+/// If `style` is omitted, the span uses `Style::default`.
 pub fn Span::Span(text : String, style? : Style = Style::default()) -> Span {
   { text, style }
 }
 
 ///|
+/// Build an unstyled span.
 pub fn Span::plain(text : String) -> Span {
   Span::Span(text)
 }
 
 ///|
+/// Terminal styling applied while a span is written.
+///
+/// A style can set foreground color, background color, and underline. Terminal
+/// styling is reset after each span is emitted.
 struct Style {
   foreground : @tty/color.Color
   background : @tty/color.Color
@@ -52,6 +74,7 @@ struct Style {
 } derive(Eq)
 
 ///|
+/// Return the default terminal style.
 pub fn Style::default() -> Style {
   {
     foreground: @tty/color.Default,
@@ -61,6 +84,10 @@ pub fn Style::default() -> Style {
 }
 
 ///|
+/// Build a terminal style.
+///
+/// Omitted color arguments use the terminal default, and `underline` defaults
+/// to `false`.
 pub fn Style::new(
   foreground? : @tty/color.Color = @tty/color.Default,
   background? : @tty/color.Color = @tty/color.Default,
