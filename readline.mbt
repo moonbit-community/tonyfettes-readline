@@ -657,7 +657,7 @@ pub async fn Readline::read_line(
         self.state.insert_text(text)
         self.redraw(header?, prompt?, footer?)
       }
-      Input(Unknown(_)) => ()
+      Input(_) => ()
       Resize(_) => self.redraw(header?, prompt?, footer?, force_full=true)
     }
   }
