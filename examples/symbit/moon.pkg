@@ -5,7 +5,6 @@ import {
   "CAIMEOX/symbit/symcore",
   "CAIMEOX/symbit/symparse",
   "CAIMEOX/symbit/symprint",
-  "moonbit-community/tty/color" @tty_color,
 }
 
 supported_targets = "native"
