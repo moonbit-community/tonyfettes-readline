@@ -41,12 +41,16 @@ fn prompt() -> @rl.Span {
 async fn run(readline : @rl.Readline) -> Unit {
   readline.write_doc(@rl.Doc::plain("Type a line. Ctrl-D exits."))
   for ;; {
-    match readline.read_line(prompt=prompt()) {
-      @rl.Line(text) =>
-        readline.write_doc(@rl.Doc::plain("submitted: " + text))
+    try {
+      match readline.read_line(prompt=prompt()) {
+        Some(text) =>
+          readline.write_doc(@rl.Doc::plain("submitted: " + text))
+        None => break
+      }
+    } catch {
       @rl.Interrupted =>
         readline.write_doc(@rl.Doc::plain("interrupted"))
-      @rl.Eof => break
+      error => raise error
     }
   }
 }
@@ -73,19 +77,37 @@ Text output is built as `Doc -> Text -> Span`:
 
 Use `Readline::write_doc` for application output while the prompt is active.
 It inserts the document above the live input area and restores the input cursor.
+Use `Readline::redraw` to refresh the active header, prompt, or footer without
+writing output.
 
 ## Input Behavior
 
 `Readline::read_line` returns:
 
-- `Line(text)` when the user submits input.
-- `Interrupted` when the user presses Ctrl-C.
-- `Eof` when the input stream closes or the user presses Ctrl-D on an empty
+- `Some(text)` when the user submits input.
+- `None` when the input stream closes or the user presses Ctrl-D on an empty
   line.
+- It raises `Interrupted` when the user presses Ctrl-C.
+
+Use `Readline::read_event` when callers need more control. It keeps normal
+editing behavior inside readline, then returns unconsumed key events so
+application code can decide whether Enter, Tab, or another key means submit,
+queue, cancel, or something else. `None` means EOF.
+
+Call `Readline::text` to inspect the current editable buffer without accepting
+or clearing it.
+
+After deciding to consume the current line, call `Readline::accept`. `accept`
+returns the current text, adds it to readline's input recall history for
+Up/Down navigation, clears the editor, and redraws the live input area. It does
+not echo the submitted prompt line into output, so callers that own a
+higher-level transcript can render it themselves.
 
 Supported editing keys include:
 
-- Enter or Ctrl-J: submit the current line.
+- Enter or Ctrl-J: submit the current line in `read_line`; returned to the
+  caller by `read_event`.
+- Tab: returned to the caller by `read_event`.
 - Ctrl-A / Ctrl-E, Home / End: move to start or end.
 - Ctrl-B / Ctrl-F, Left / Right: move by one grapheme.
 - Backspace / Delete: delete before or after the cursor.

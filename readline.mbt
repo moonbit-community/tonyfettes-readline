@@ -367,7 +367,7 @@ async fn Readline::place_composer_cursor(self : Readline) -> Unit {
 }
 
 ///|
-async fn Readline::redraw(
+async fn Readline::redraw_input_area(
   self : Readline,
   header? : Doc,
   prompt? : Span,
@@ -502,18 +502,21 @@ async fn Readline::commit_input(
 }
 
 ///|
-async fn Readline::submit_current_line(
+async fn Readline::accept_current_line(
   self : Readline,
   header? : Doc,
   prompt? : Span,
   footer? : Doc,
+  echo_input? : Bool = true,
 ) -> String {
   let text = self.state.text()
   let size = self.terminal_size()
-  self.commit_input(size~, prompt?)
+  if echo_input {
+    self.commit_input(size~, prompt?)
+  }
   self.history.push(text)
   self.state.reset()
-  self.redraw(header?, prompt?, footer?)
+  self.redraw_input_area(header?, prompt?, footer?)
   text
 }
 
@@ -526,7 +529,7 @@ async fn Readline::recall_previous_history(
 ) -> Unit {
   if self.history.previous(self.state.text()) is Some(text) {
     self.state.replace(text)
-    self.redraw(header?, prompt?, footer?)
+    self.redraw_input_area(header?, prompt?, footer?)
   }
 }
 
@@ -539,33 +542,55 @@ async fn Readline::recall_next_history(
 ) -> Unit {
   if self.history.next() is Some(text) {
     self.state.replace(text)
-    self.redraw(header?, prompt?, footer?)
+    self.redraw_input_area(header?, prompt?, footer?)
   }
 }
 
 ///|
-/// Read one line of user input from the terminal.
+/// Return the current editable text without accepting or clearing it.
+pub fn Readline::text(self : Readline) -> String {
+  self.state.text()
+}
+
+///|
+/// Accept the current editable line and reset the editor state.
 ///
-/// `header` is rendered above the editable input area, `prompt` is rendered
-/// before the editable text, and `footer` is rendered below it. The editor
-/// supports common line-editing keys, history navigation, paste input, and
-/// terminal resize redraws.
-pub async fn Readline::read_line(
+/// The accepted line is added to readline's input recall history for Up/Down
+/// navigation. `accept` does not write the submitted prompt line into the
+/// output transcript; callers that own a higher-level transcript can render it
+/// themselves.
+pub async fn Readline::accept(
   self : Readline,
   header? : Doc,
   prompt? : Span,
   footer? : Doc,
-) -> Event {
-  self.state.reset()
-  self.history.reset_navigation(draft="")
-  self.redraw(header?, prompt?, footer?)
+) -> String {
+  self.accept_current_line(header?, prompt?, footer?, echo_input=false)
+}
+
+///|
+/// Read until an event is available for the caller to interpret.
+///
+/// `header` is rendered above the editable input area, `prompt` is rendered
+/// before the editable text, and `footer` is rendered below it. The editor
+/// consumes common line-editing keys, history navigation, paste input, and
+/// terminal resize redraws. Keys that readline does not consume are returned so
+/// application code can decide what they mean. `None` means the input stream
+/// ended, or the user pressed Ctrl+D on an empty line.
+pub async fn Readline::read_event(
+  self : Readline,
+  header? : Doc,
+  prompt? : Span,
+  footer? : Doc,
+) -> Event? {
+  self.redraw_input_area(header?, prompt?, footer?)
   for ;; {
     let event = self.tty.read_event(esc_timeout_ms=self.config.esc_timeout_ms) catch {
       @async/io.ReaderClosed => {
         self.state.reset()
         self.history.reset_navigation(draft="")
-        self.redraw(header?, prompt?, footer?)
-        break Eof
+        self.redraw_input_area(header?, prompt?, footer?)
+        break None
       }
       error => raise error
     }
@@ -574,40 +599,37 @@ pub async fn Readline::read_line(
         match key.code {
           Char('a') if key.modifiers.ctrl() => {
             self.state.move_home()
-            self.redraw(header?, prompt?, footer?)
+            self.redraw_input_area(header?, prompt?, footer?)
           }
           Char('b') if key.modifiers.ctrl() => {
             self.state.move_left()
-            self.redraw(header?, prompt?, footer?)
+            self.redraw_input_area(header?, prompt?, footer?)
           }
           Char('c') if key.modifiers.ctrl() => {
             self.state.reset()
             self.history.reset_navigation(draft="")
-            self.redraw(header?, prompt?, footer?)
-            break Interrupted
+            self.redraw_input_area(header?, prompt?, footer?)
+            break Some(Key(key))
           }
           Char('d') if key.modifiers.ctrl() =>
             if self.state.text().length() == 0 {
-              break Eof
+              break None
             } else {
               self.state.delete_after()
-              self.redraw(header?, prompt?, footer?)
+              self.redraw_input_area(header?, prompt?, footer?)
             }
           Char('e') if key.modifiers.ctrl() => {
             self.state.move_end()
-            self.redraw(header?, prompt?, footer?)
+            self.redraw_input_area(header?, prompt?, footer?)
           }
           Char('f') if key.modifiers.ctrl() => {
             self.state.move_right()
-            self.redraw(header?, prompt?, footer?)
+            self.redraw_input_area(header?, prompt?, footer?)
           }
-          Char('j') if key.modifiers.ctrl() => {
-            let text = self.submit_current_line(header?, prompt?, footer?)
-            break Line(text)
-          }
+          Char('j') if key.modifiers.ctrl() => break Some(Key(key))
           Char('k') if key.modifiers.ctrl() => {
             self.state.kill_after()
-            self.redraw(header?, prompt?, footer?)
+            self.redraw_input_area(header?, prompt?, footer?)
           }
           Char('n') if key.modifiers.ctrl() =>
             self.recall_next_history(header?, prompt?, footer?)
@@ -615,50 +637,96 @@ pub async fn Readline::read_line(
             self.recall_previous_history(header?, prompt?, footer?)
           Char('u') if key.modifiers.ctrl() => {
             self.state.kill_before()
-            self.redraw(header?, prompt?, footer?)
+            self.redraw_input_area(header?, prompt?, footer?)
           }
-          Enter => {
-            let text = self.submit_current_line(header?, prompt?, footer?)
-            break Line(text)
-          }
+          Enter => break Some(Key(key))
+          Tab => break Some(Key(key))
           Backspace => {
             self.state.delete_before()
-            self.redraw(header?, prompt?, footer?)
+            self.redraw_input_area(header?, prompt?, footer?)
           }
           Delete => {
             self.state.delete_after()
-            self.redraw(header?, prompt?, footer?)
+            self.redraw_input_area(header?, prompt?, footer?)
           }
           Left => {
             self.state.move_left()
-            self.redraw(header?, prompt?, footer?)
+            self.redraw_input_area(header?, prompt?, footer?)
           }
           Right => {
             self.state.move_right()
-            self.redraw(header?, prompt?, footer?)
+            self.redraw_input_area(header?, prompt?, footer?)
           }
           Home => {
             self.state.move_home()
-            self.redraw(header?, prompt?, footer?)
+            self.redraw_input_area(header?, prompt?, footer?)
           }
           End => {
             self.state.move_end()
-            self.redraw(header?, prompt?, footer?)
+            self.redraw_input_area(header?, prompt?, footer?)
           }
           Up => self.recall_previous_history(header?, prompt?, footer?)
           Down => self.recall_next_history(header?, prompt?, footer?)
           _ =>
             if key.text is Some(text) {
               self.state.insert_text(text)
-              self.redraw(header?, prompt?, footer?)
+              self.redraw_input_area(header?, prompt?, footer?)
+            } else {
+              break Some(Key(key))
             }
         }
       Input(Paste(text)) => {
         self.state.insert_text(text)
-        self.redraw(header?, prompt?, footer?)
+        self.redraw_input_area(header?, prompt?, footer?)
       }
       Input(_) => ()
-      Resize(_) => self.redraw(header?, prompt?, footer?, force_full=true)
+      Resize(_) =>
+        self.redraw_input_area(header?, prompt?, footer?, force_full=true)
+    }
+  }
+}
+
+///|
+/// Read one line of user input from the terminal.
+///
+/// This convenience wrapper echoes submitted input into the output area and
+/// treats only Enter and Ctrl-J as line submissions. It returns `None` when the
+/// input stream ends or Ctrl+D is pressed on an empty line, and raises
+/// `Interrupted` when the user presses Ctrl+C.
+pub async fn Readline::read_line(
+  self : Readline,
+  header? : Doc,
+  prompt? : Span,
+  footer? : Doc,
+) -> String? {
+  self.state.reset()
+  self.history.reset_navigation(draft="")
+  for ;; {
+    match self.read_event(header?, prompt?, footer?) {
+      Some(Key(key)) =>
+        match key.code {
+          Char('c') if key.modifiers.ctrl() => raise Interrupted
+          Char('j') if key.modifiers.ctrl() => {
+            let text = self.accept_current_line(
+              header?,
+              prompt?,
+              footer?,
+              echo_input=true,
+            )
+            break Some(text)
+          }
+          Enter => {
+            let text = self.accept_current_line(
+              header?,
+              prompt?,
+              footer?,
+              echo_input=true,
+            )
+            break Some(text)
+          }
+          _ => ()
+        }
+      None => break None
     }
   }
 }
@@ -671,6 +739,23 @@ pub async fn Readline::read_line(
 pub async fn Readline::write_doc(self : Readline, doc : Doc) -> Unit {
   let size = self.terminal_size()
   self.write_output_frame(doc.layout(width=size.cols), size~)
+}
+
+///|
+/// Redraw the currently visible input area, if one is active.
+///
+/// This lets higher-level adapters update header/footer state, such as queued
+/// input previews or status text, while `read_event` or `read_line` is waiting
+/// for input. If no input area has been drawn yet, this is a no-op.
+pub async fn Readline::redraw(
+  self : Readline,
+  header? : Doc,
+  prompt? : Span,
+  footer? : Doc,
+) -> Unit {
+  if self.composer_height > 0 && self.composer_top > 0 {
+    self.redraw_input_area(header?, prompt?, footer?, force_full=true)
+  }
 }
 
 ///|

@@ -3,12 +3,16 @@ package "tonyfettes/readline"
 
 import {
   "moonbit-community/tty/color",
+  "moonbit-community/tty/input",
 }
 
 // Values
 pub async fn[T] with_readline(esc_timeout_ms? : Int, async (Readline) -> T) -> T
 
 // Errors
+pub(all) suberror Interrupted {
+  Interrupted
+}
 
 // Types and methods
 pub struct Doc {
@@ -18,13 +22,15 @@ pub fn Doc::Doc(Array[Text]) -> Self
 pub fn Doc::plain(String) -> Self
 
 pub(all) enum Event {
-  Line(String)
-  Interrupted
-  Eof
+  Key(@input.KeyEvent)
 }
 
 type Readline
-pub async fn Readline::read_line(Self, header? : Doc, prompt? : Span, footer? : Doc) -> Event
+pub async fn Readline::accept(Self, header? : Doc, prompt? : Span, footer? : Doc) -> String
+pub async fn Readline::read_event(Self, header? : Doc, prompt? : Span, footer? : Doc) -> Event?
+pub async fn Readline::read_line(Self, header? : Doc, prompt? : Span, footer? : Doc) -> String?
+pub async fn Readline::redraw(Self, header? : Doc, prompt? : Span, footer? : Doc) -> Unit
+pub fn Readline::text(Self) -> String
 pub async fn Readline::write_doc(Self, Doc) -> Unit
 
 pub struct Span {

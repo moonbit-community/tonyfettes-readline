@@ -145,10 +145,14 @@ async fn handle_line(readline : @rl.Readline, text : String) -> Bool {
 async fn run(readline : @rl.Readline) -> Unit {
   readline.write_doc(@rl.Doc::plain("Try: (x + 1)^2, sin(x)^2 + cos(x)^2"))
   for ;; {
-    match readline.read_line(prompt=prompt()) {
-      Line(text) => if !handle_line(readline, text) { break }
-      Interrupted => readline.write_doc(@rl.Doc::plain("interrupted"))
-      Eof => break
+    try {
+      match readline.read_line(prompt=prompt()) {
+        Some(text) => if !handle_line(readline, text) { break }
+        None => break
+      }
+    } catch {
+      @rl.Interrupted => readline.write_doc(@rl.Doc::plain("interrupted"))
+      error => raise error
     }
   }
 }
