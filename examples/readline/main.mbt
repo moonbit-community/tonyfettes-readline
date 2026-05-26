@@ -1,21 +1,15 @@
 ///|
 fn prompt() -> @rl.Span {
-  @rl.Span(
-    "readline> ",
-    style=@rl.Style::new(foreground=@tty_color.Basic(@tty_color.BrightGreen)),
-  )
+  Span("readline> ", style=@rl.Style::new(foreground=Basic(BrightGreen)))
 }
 
 ///|
 fn header() -> @rl.Doc {
-  @rl.Doc([
-    @rl.Text([
-      @rl.Span(
+  Doc([
+    Text([
+      Span(
         "readline demo",
-        style=@rl.Style::new(
-          foreground=@tty_color.Basic(@tty_color.BrightCyan),
-          underline=true,
-        ),
+        style=@rl.Style::new(foreground=Basic(BrightCyan), underline=true),
       ),
     ]),
     @rl.Text::plain("Enter submits. Up/Down recall. Ctrl-A/E/B/F/K edit."),
@@ -25,13 +19,11 @@ fn header() -> @rl.Doc {
 
 ///|
 fn footer(round : Int) -> @rl.Doc {
-  @rl.Doc([
-    @rl.Text([
-      @rl.Span(
+  Doc([
+    Text([
+      Span(
         "round \{round}",
-        style=@rl.Style::new(
-          foreground=@tty_color.Basic(@tty_color.BrightBlack),
-        ),
+        style=@rl.Style::new(foreground=Basic(BrightBlack)),
       ),
     ]),
   ])
@@ -44,15 +36,15 @@ async fn run(readline : @rl.Readline) -> Unit {
   for ;; {
     match
       readline.read_line(header=header(), prompt=prompt(), footer=footer(round)) {
-      @rl.Line(text) => {
+      Line(text) => {
         readline.write_doc(@rl.Doc::plain("submitted: " + text))
         round += 1
       }
-      @rl.Interrupted => {
+      Interrupted => {
         readline.write_doc(@rl.Doc::plain("interrupted"))
         round += 1
       }
-      @rl.Eof => {
+      Eof => {
         readline.write_doc(@rl.Doc::plain("bye"))
         break
       }

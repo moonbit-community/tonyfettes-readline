@@ -15,20 +15,14 @@ priv enum Command {
 
 ///|
 fn prompt() -> @rl.Span {
-  @rl.Span(
-    "symbit> ",
-    style=@rl.Style::new(foreground=@tty_color.Basic(@tty_color.BrightGreen)),
-  )
+  Span("symbit> ", style=@rl.Style::new(foreground=Basic(BrightGreen)))
 }
 
 ///|
 fn result_doc(text : String) -> @rl.Doc {
-  @rl.Doc([
-    @rl.Text([
-      @rl.Span(
-        "= ",
-        style=@rl.Style::new(foreground=@tty_color.Basic(@tty_color.BrightBlue)),
-      ),
+  Doc([
+    Text([
+      Span("= ", style=@rl.Style::new(foreground=Basic(BrightBlue))),
       @rl.Span::plain(text),
     ]),
   ])
@@ -36,12 +30,9 @@ fn result_doc(text : String) -> @rl.Doc {
 
 ///|
 fn error_doc(text : String) -> @rl.Doc {
-  @rl.Doc([
-    @rl.Text([
-      @rl.Span(
-        "error: ",
-        style=@rl.Style::new(foreground=@tty_color.Basic(@tty_color.BrightRed)),
-      ),
+  Doc([
+    Text([
+      Span("error: ", style=@rl.Style::new(foreground=Basic(BrightRed))),
       @rl.Span::plain(text),
     ]),
   ])
@@ -49,7 +40,7 @@ fn error_doc(text : String) -> @rl.Doc {
 
 ///|
 fn help_doc() -> @rl.Doc {
-  @rl.Doc([
+  Doc([
     @rl.Text::plain("Commands:"),
     @rl.Text::plain("  <expr>        parse, simplify, and pretty-print"),
     @rl.Text::plain("  :raw <expr>   parse and pretty-print without simplify"),
@@ -155,9 +146,9 @@ async fn run(readline : @rl.Readline) -> Unit {
   readline.write_doc(@rl.Doc::plain("Try: (x + 1)^2, sin(x)^2 + cos(x)^2"))
   for ;; {
     match readline.read_line(prompt=prompt()) {
-      @rl.Line(text) => if !handle_line(readline, text) { break }
-      @rl.Interrupted => readline.write_doc(@rl.Doc::plain("interrupted"))
-      @rl.Eof => break
+      Line(text) => if !handle_line(readline, text) { break }
+      Interrupted => readline.write_doc(@rl.Doc::plain("interrupted"))
+      Eof => break
     }
   }
 }

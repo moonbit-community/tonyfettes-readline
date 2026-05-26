@@ -59,7 +59,7 @@ pub fn Span::Span(text : String, style? : Style = Style::default()) -> Span {
 ///|
 /// Build an unstyled span.
 pub fn Span::plain(text : String) -> Span {
-  Span::Span(text)
+  Span(text)
 }
 
 ///|
@@ -76,11 +76,7 @@ struct Style {
 ///|
 /// Return the default terminal style.
 pub fn Style::default() -> Style {
-  {
-    foreground: @tty/color.Default,
-    background: @tty/color.Default,
-    underline: false,
-  }
+  { foreground: Default, background: Default, underline: false }
 }
 
 ///|
@@ -89,8 +85,8 @@ pub fn Style::default() -> Style {
 /// Omitted color arguments use the terminal default, and `underline` defaults
 /// to `false`.
 pub fn Style::new(
-  foreground? : @tty/color.Color = @tty/color.Default,
-  background? : @tty/color.Color = @tty/color.Default,
+  foreground? : @tty/color.Color = Default,
+  background? : @tty/color.Color = Default,
   underline? : Bool = false,
 ) -> Style {
   { foreground, background, underline }
@@ -98,10 +94,10 @@ pub fn Style::new(
 
 ///|
 async fn Style::apply(self : Style, tty : @tty.Tty) -> Unit {
-  if self.foreground != @tty/color.Default {
+  if self.foreground != Default {
     tty.set_foreground(self.foreground)
   }
-  if self.background != @tty/color.Default {
+  if self.background != Default {
     tty.set_background(self.background)
   }
   if self.underline {
@@ -215,7 +211,7 @@ fn Text::wrap(self : Text, width~ : Int) -> Array[Line] {
           spans = []
           used = 0
         }
-        spans.push(Span::Span(text, style=span.style))
+        spans.push(Span(text, style=span.style))
         used += next
       }
     }

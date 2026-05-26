@@ -1,7 +1,6 @@
 import {
   "moonbitlang/async",
   "tonyfettes/readline" @rl,
-  "moonbit-community/tty/color" @tty_color,
 }
 
 supported_targets = "native"
