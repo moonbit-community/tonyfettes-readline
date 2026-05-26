@@ -373,6 +373,7 @@ async fn Readline::redraw_input_area(
   prompt? : Span,
   footer? : Doc,
   force_full? : Bool = false,
+  scroll_history? : Bool = true,
 ) -> Unit {
   let size = self.terminal_size()
   let rendered = self.layout(size~, header?, prompt?, footer?)
@@ -395,7 +396,10 @@ async fn Readline::redraw_input_area(
   } else {
     planned_top
   }
-  if !force_full && old_height > 0 && new_top < old_top {
+  // Header/footer growth needs to free rows above the composer before drawing.
+  // Resize redraws opt out because terminal-owned reflow makes old rows
+  // untrustworthy.
+  if scroll_history && old_height > 0 && new_top < old_top {
     self.scroll_history_up_for_growth(old_top~, new_top~)
   }
   let diff_old_top = if force_full && old_height > 0 && growth > 0 {
@@ -681,7 +685,13 @@ pub async fn Readline::read_event(
       }
       Input(_) => ()
       Resize(_) =>
-        self.redraw_input_area(header?, prompt?, footer?, force_full=true)
+        self.redraw_input_area(
+          header?,
+          prompt?,
+          footer?,
+          force_full=true,
+          scroll_history=false,
+        )
     }
   }
 }
