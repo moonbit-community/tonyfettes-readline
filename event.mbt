@@ -1,10 +1,12 @@
 ///|
-/// The result of a `Readline::read_line` interaction.
-pub(all) enum Event {
-  /// The user submitted a complete input line.
-  Line(String)
-  /// The user pressed Ctrl+C.
+/// Raised by `Readline::read_line` when the user presses Ctrl+C.
+pub(all) suberror Interrupted {
   Interrupted
-  /// The input stream ended, or the user pressed Ctrl+D on an empty line.
-  Eof
+}
+
+///|
+/// An event that readline did not consume as line editing.
+pub(all) enum Event {
+  /// A key that application code can interpret.
+  Key(@tty/input.KeyEvent)
 }

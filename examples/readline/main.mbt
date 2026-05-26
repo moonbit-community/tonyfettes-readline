@@ -34,20 +34,28 @@ async fn run(readline : @rl.Readline) -> Unit {
   let mut round = 1
   readline.write_doc(@rl.Doc::plain("Type something to echo it back."))
   for ;; {
-    match
-      readline.read_line(header=header(), prompt=prompt(), footer=footer(round)) {
-      Line(text) => {
-        readline.write_doc(@rl.Doc::plain("submitted: " + text))
-        round += 1
+    try {
+      match
+        readline.read_line(
+          header=header(),
+          prompt=prompt(),
+          footer=footer(round),
+        ) {
+        Some(text) => {
+          readline.write_doc(@rl.Doc::plain("submitted: " + text))
+          round += 1
+        }
+        None => {
+          readline.write_doc(@rl.Doc::plain("bye"))
+          break
+        }
       }
-      Interrupted => {
+    } catch {
+      @rl.Interrupted => {
         readline.write_doc(@rl.Doc::plain("interrupted"))
         round += 1
       }
-      Eof => {
-        readline.write_doc(@rl.Doc::plain("bye"))
-        break
-      }
+      error => raise error
     }
   }
 }
